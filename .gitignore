@@ -15,3 +15,6 @@ release
 .gate-crossex-source-install
 .gate-crossex-source.json
 .claude/
+
+# skill symlinks — machine-local, do not commit
+.agents/
