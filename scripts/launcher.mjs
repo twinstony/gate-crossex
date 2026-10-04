@@ -21,6 +21,9 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = resolve(process.env.GCT_DATA_DIR ?? join(root, '.local-data'));
 const logsDir = join(root, 'logs');
+// The backend binds GCT_HOST (apps/backend/src/config.ts); every local probe must target the
+// same host it will actually serve, otherwise a LAN bind makes these probes connection-refused.
+const serviceHost = process.env.GCT_HOST ?? '127.0.0.1';
 const configPath = join(dataDir, 'config.json');
 const runtimePath = join(dataDir, 'runtime.json');
 const isWindows = process.platform === 'win32';
@@ -231,14 +234,14 @@ async function start(mode) {
     let alive = recordedPids.some(recordedProcessAlive);
     if (!alive && Number.isInteger(previousRuntime.backendPort)) {
       try {
-        const response = await fetch(`http://127.0.0.1:${previousRuntime.backendPort}/health`, { signal: AbortSignal.timeout(700) });
+        const response = await fetch(`http://${previousRuntime.host ?? serviceHost}:${previousRuntime.backendPort}/health`, { signal: AbortSignal.timeout(700) });
         alive = response.ok;
       } catch {
         // Nothing is serving the recorded port; the previous stack is really gone.
       }
     }
     if (alive) {
-      console.error(`Gate CrossEx (or part of it) is already running at http://127.0.0.1:${previousRuntime.frontendPort}. Run ./run stop first.`);
+      console.error(`Gate CrossEx (or part of it) is already running at http://${previousRuntime.host ?? serviceHost}:${previousRuntime.frontendPort}. Run ./run stop first.`);
       process.exitCode = 1;
       return;
     }
@@ -257,7 +260,7 @@ async function start(mode) {
   writeJson(configPath, {
     schemaVersion: 1,
     mode: 'live',
-    host: '127.0.0.1',
+    host: serviceHost,
     ports: { backend: backendPort, frontend: frontendPort },
   });
 
@@ -278,7 +281,7 @@ async function start(mode) {
     GCT_MIGRATIONS_DIR: join(root, 'migrations'),
     GCT_PORT: String(backendPort),
     GCT_FRONTEND_PORT: String(frontendPort),
-    GCT_FRONTEND_ORIGIN: `http://127.0.0.1:${frontendPort}`,
+    GCT_FRONTEND_ORIGIN: `http://${serviceHost}:${frontendPort}`,
     GCT_FRONTEND_DIST_DIR: join(root, 'apps/frontend/dist'),
   };
   const backendOptions = {
@@ -310,6 +313,7 @@ async function start(mode) {
     launcherPid: process.pid,
     backendPid: backend.pid,
     frontendPid: frontend?.pid ?? null,
+    host: serviceHost,
     backendPort,
     frontendPort,
     startedAt: new Date().toISOString(),
@@ -345,13 +349,13 @@ async function start(mode) {
 
   try {
     await Promise.all([
-      waitForUrl(`http://127.0.0.1:${backendPort}/health`, children),
-      waitForUrl(`http://127.0.0.1:${frontendPort}`, children),
+      waitForUrl(`http://${serviceHost}:${backendPort}/health`, children),
+      waitForUrl(`http://${serviceHost}:${frontendPort}`, children),
     ]);
-    console.log(`\nGate CrossEx is ready: http://127.0.0.1:${frontendPort}`);
-    console.log(`Backend health: http://127.0.0.1:${backendPort}/health`);
+    console.log(`\nGate CrossEx is ready: http://${serviceHost}:${frontendPort}`);
+    console.log(`Backend health: http://${serviceHost}:${backendPort}/health`);
     console.log('Press Ctrl+C to stop.');
-    openBrowser(`http://127.0.0.1:${frontendPort}`);
+    openBrowser(`http://${serviceHost}:${frontendPort}`);
   } catch (error) {
     await shutdown();
     throw error;
@@ -420,7 +424,7 @@ async function doctor() {
   let health = 'not running';
   if (runtimeAlive) {
     try {
-      const response = await fetch(`http://127.0.0.1:${runtime.backendPort}/health`, { signal: AbortSignal.timeout(1_000) });
+      const response = await fetch(`http://${runtime.host ?? serviceHost}:${runtime.backendPort}/health`, { signal: AbortSignal.timeout(1_000) });
       health = response.ok ? 'healthy' : `HTTP ${response.status}`;
     } catch {
       health = 'unreachable';
